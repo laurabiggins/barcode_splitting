@@ -10,18 +10,20 @@ import argparse
 from argparse import RawTextHelpFormatter
 from datetime import datetime
 
+# line 121 - change for processing a full file vs first few lines
+
 # Option for setting the barcode length - can default to the length in Sierra but we want to be able to set it too.
-# Option (for Jon's NEB UMI data) to take remaining sequence from I1 file and add it the read ID of read 1 files. 
+# Option (for Jon's NEB UMI data) to take remaining sequence from I1 file and add it to the read ID of read 1 files. 
 # Check the TrAEL format as that's how the deduplication works
 # option to pass in a csv samplesheet if we don't want to get the sample info from Sierra.
 
 # single barcoded
-# python3 ../../split_barcodes.py 20250404_AV240405_AV_B_PRG6210_PE75_04042025
+# ../../split_barcodes.py 20250404_AV240405_AV_B_PRG6210_PE75_04042025
 
 # dual barcoded
 # python3 ../../split_barcodes.py 20250127_AV240405_AV_B_MT6176_ET6177_SE75_27012025 lane1_NoIndex_L001_R1.fastq.gz lane1_NoIndex_L001_I1.fastq.gz lane1_NoIndex_L001_I2.fastq.gz
 
-fhs = {}           # storing the filehandles for all output files - dictionary of filehandles where key is sample barcode
+fhsR1 = {}           # storing the filehandles for all output files - dictionary of filehandles where key is sample barcode
 fhsR2 = {}
 #paired_end = False
 double_coded = False
@@ -56,7 +58,7 @@ def main():
     sample = "temp_name"
 
     log_filename = f"{sample}_indexing.log"
-    fhs["log"] = open(log_filename, mode = "w")
+    fhsR1["log"] = open(log_filename, mode = "w")
 
     try:
         expected_barcodes_list = get_expected_barcodes(run_folder, lane_number)
@@ -64,7 +66,6 @@ def main():
         double_coded = expected_barcodes_list[1]
         print(f"barcodes are {expected_barcodes}. \nIs this a double coded library? {double_coded}")
 
-       # split_fastqs(R1, R2, I1, I2, expected_barcodes, double_coded)
         split_fastqs(file_location, expected_barcodes, double_coded)
 
     except Exception as err:
@@ -77,15 +78,15 @@ def main():
 #----------------------------------------------
 #  do the splitting
 #----------------------------------------------
+
 def split_fastqs(file_location, expected_barcodes, double_coded):
   
-    #filename = R1
-    #filename2 = R2
-
     R1 = get_R1(file_location)
     R2 = get_R2(file_location)
     I1 = get_I1(file_location)
-    I2 = get_I2(file_location)
+
+    if double_coded:
+        I2 = get_I2(file_location)
 
     #if (double_coded and I2 is not None):
     # dual barcoded in Sierra but couldn't find an I2 file
@@ -93,21 +94,27 @@ def split_fastqs(file_location, expected_barcodes, double_coded):
     if (R2 is not None):
         paired_end = True
     else:
-        paired_end = False
+        paired_end = False   
 
     for key in expected_barcodes:
 
         new_filenameR1 = f"laneX_{key}_{expected_barcodes[key]}_R1.fastq.gz"
-		#new_filename = f"{sample}_{sample_level_barcode}_{suffix}"
-        open_filehandles(new_filenameR1, key)
+        open_filehandlesR1(new_filenameR1, key)
 
         if paired_end:
-            new_filenameR2 = f"laneXX_{key}_{expected_barcodes[key]}_R2.fastq.gz"
-            open_filehandles(new_filenameR2, key)
+            new_filenameR2 = f"laneX_{key}_{expected_barcodes[key]}_R2.fastq.gz"
+            open_filehandlesR2(new_filenameR2, key)
 
-    #with gzip.open(filename) as cf, gzip.open(filename2) as cf2:
-    with gzip.open(R1) as cf, gzip.open(I1) as i1, gzip.open(I2) as i2:
-    #with gzip.open(filename) as cf, gzip.open(filename2) as cf2, gzip.open(I1) as i1, gzip.open(I2) as i2:
+    r1 = gzip.open(R1)
+    i1 = gzip.open(I1)
+
+    if paired_end:
+        r2 = gzip.open(R2)
+
+    if double_coded:
+        i2 = gzip.open(I2)
+
+    try:
 		# unassigned_count = 0 # count the number of reads that don't match supplied barcodes
 		# unpaired_count = 0 # count the number of R2 barcodes that don't match R1
         line_count = 0
@@ -115,10 +122,10 @@ def split_fastqs(file_location, expected_barcodes, double_coded):
 
         #while True:
         while line_count <= 4000: 
-            readID_R1  = cf.readline().decode().strip()
-            seq_R1     = cf.readline().decode().strip()
-            line3_R1   = cf.readline().decode().strip()
-            qual_R1    = cf.readline().decode().strip()
+            readID_R1  = r1.readline().decode().strip()
+            seq_R1     = r1.readline().decode().strip()
+            line3_R1   = r1.readline().decode().strip()
+            qual_R1    = r1.readline().decode().strip()
 
             shortID_R1 = readID_R1.split(" ")[0]
 			
@@ -126,23 +133,23 @@ def split_fastqs(file_location, expected_barcodes, double_coded):
                 break
 			
             if paired_end:
-                readID_R2  = cf2.readline().decode().strip()
-                seq2_R2    = cf2.readline().decode().strip()
-                line3_R2   = cf2.readline().decode().strip()
-                qual_R2    = cf2.readline().decode().strip()
-                shortID_R2 = readID2.split(" ")[0]
+                readID_R2  = r2.readline().decode().strip()
+                seq_R2     = r2.readline().decode().strip()
+                line3_R2   = r2.readline().decode().strip()
+                qual_R2    = r2.readline().decode().strip()
+                shortID_R2 = readID_R2.split(" ")[0]
 
             readID_I1  = i1.readline().decode().strip()
             seq_I1     = i1.readline().decode().strip()
-            line3_I1   = i1.readline().decode().strip()
-            qual_I1    = i1.readline().decode().strip()
+            line3_I1   = i1.readline()#.decode().strip()
+            qual_I1    = i1.readline()#.decode().strip()
             shortID_I1 = readID_I1.split(" ")[0]
 
             if double_coded:
                 readID_I2  = i2.readline().decode().strip()
                 seq_I2     = i2.readline().decode().strip()
-                line3_I2   = i2.readline().decode().strip()
-                qual_I2    = i2.readline().decode().strip()
+                line3_I2   = i2.readline()#.decode().strip()
+                qual_I2    = i2.readline()#.decode().strip()
                 shortID_I2 = readID_I2.split(" ")[0]
 
                 barcode = f"{seq_I1}_{seq_I2}"
@@ -155,7 +162,13 @@ def split_fastqs(file_location, expected_barcodes, double_coded):
                 readID_R1 = f"{readID_R1} {barcode}"
 
                 # this one's quicker - is it because we're not writing out so many times?
-                fhs[barcode].write (("\n".join([readID_R1, seq_R1, line3_R1, qual_R1]) + "\n").encode())
+                fhsR1[barcode].write (("\n".join([readID_R1, seq_R1, line3_R1, qual_R1]) + "\n").encode())
+
+
+                if paired_end:
+                    readID_R2 = f"{readID_R2} {barcode}"
+
+                    fhsR2[barcode].write (("\n".join([readID_R2, seq_R2, line3_R2, qual_R2]) + "\n").encode())
 
             #else:
                 #print(f"Couldn't find this {barcode}")
@@ -166,17 +179,30 @@ def split_fastqs(file_location, expected_barcodes, double_coded):
             if shortID_R1 != shortID_I1:
                 err_msg = f"\n!! IDs do not match for read {line_count}, exiting... !!\n"
                 print(err_msg)
-                fhs["log"].write(err_msg)
+                fhsR1["log"].write(err_msg)
                 exit()
 
-def open_filehandles(fname, sample_level_barcode):
-	#print (f"Opening filehandle for {sample_level_barcode} and {fname}")
-	fhs[sample_level_barcode] = gzip.open (fname,mode='wb',compresslevel=3)
+    finally:
+        r1.close()
+        i1.close()
+        if paired_end:
+            r2.close()
+        if double_coded:
+            i2.close() 
 
+def open_filehandlesR1(fname, sample_level_barcode):
+	#print (f"Opening filehandle for {sample_level_barcode} and {fname}")
+	fhsR1[sample_level_barcode] = gzip.open (fname,mode='wb',compresslevel=3)
+
+def open_filehandlesR2(fname, sample_level_barcode):
+	#print (f"Opening filehandle for {sample_level_barcode} and {fname}")
+	fhsR2[sample_level_barcode] = gzip.open (fname,mode='wb',compresslevel=3)
 
 def close_filehandles():
-	for name in fhs.keys():
-		fhs[name].close() 
+	for name in fhsR1.keys():
+		fhsR1[name].close() 
+	for name in fhsR2.keys():
+		fhsR2[name].close() 
 
 #---------------------
 # quick barcode check
