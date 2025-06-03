@@ -12,6 +12,8 @@ from datetime import datetime
 
 # line 121 - change for processing a full file vs first few lines
 
+#  ssub -j CS_splitting_full -e split.err -o split.out ../../split_barcodes.py --i1_trim 3 --i1_revcomp --i2_revcomp 20250529_AV240405_AV_B_CS6236_SE150_29052025
+
 # Option for setting the barcode length - can default to the length in Sierra but we want to be able to set it too.
 # Option (for Jon's NEB UMI data) to take remaining sequence from I1 file and add it to the read ID of read 1 files. 
 # Check the TrAEL format as that's how the deduplication works
@@ -37,12 +39,18 @@ parser.add_argument('--lane_number', type=str, default="1", help='Lane number on
 
 #parser.add_argument('--verbose', default=False, action='store_true', help='verbose processing')
 parser.add_argument('--i1_umi', default=False, action='store_true', help='If UMI is present after the barcode in the I1 file. Set barcode length if this is specified')
+parser.add_argument('--i1_trim', type=int, default=0, help='Trim first n bases from I1 (initially used for IDT xGen Stubby Adapter where the frist 3 bases need to be removed)')
+parser.add_argument('--i1_revcomp', default=False, action='store_true', help='Reverse complement the I1 sequence')
+parser.add_argument('--i2_revcomp', default=False, action='store_true', help='Reverse complement the I2 sequence')
 parser.add_argument('--barcode_length', type=int, default=0, help='If barcode length differs from actual length of sequences in the index file(s)')
 
 args=parser.parse_args()
 
 run_folder = args.run_folder
 
+I1_trim = args.i1_trim
+I1_revcomp = args.i1_revcomp
+I2_revcomp = args.i2_revcomp
 
 def main():
 
@@ -55,9 +63,9 @@ def main():
    #paired_end = False
 
 	# open logfile
-    sample = "temp_name"
+    #sample = "temp_name"
 
-    log_filename = f"{sample}_indexing.log"
+    log_filename = f"splitting_info.log"
     fhsR1["log"] = open(log_filename, mode = "w")
 
     try:
@@ -115,13 +123,14 @@ def split_fastqs(file_location, expected_barcodes, double_coded):
         i2 = gzip.open(I2)
 
     try:
-		# unassigned_count = 0 # count the number of reads that don't match supplied barcodes
 		# unpaired_count = 0 # count the number of R2 barcodes that don't match R1
         line_count = 0
         barcode = ""
+        unassigned_count = 0
+        assigned_count = 0
 
-        #while True:
-        while line_count <= 4000: 
+        while True:
+        #while line_count <= 40000: 
             readID_R1  = r1.readline().decode().strip()
             seq_R1     = r1.readline().decode().strip()
             line3_R1   = r1.readline().decode().strip()
@@ -145,6 +154,12 @@ def split_fastqs(file_location, expected_barcodes, double_coded):
             qual_I1    = i1.readline()#.decode().strip()
             shortID_I1 = readID_I1.split(" ")[0]
 
+            if I1_trim > 0:
+                seq_I1 = seq_I1[I1_trim:]
+
+            if I1_revcomp:
+                seq_I1 = reverse_complement(seq_I1)
+
             if double_coded:
                 readID_I2  = i2.readline().decode().strip()
                 seq_I2     = i2.readline().decode().strip()
@@ -152,12 +167,16 @@ def split_fastqs(file_location, expected_barcodes, double_coded):
                 qual_I2    = i2.readline()#.decode().strip()
                 shortID_I2 = readID_I2.split(" ")[0]
 
+                if I2_revcomp:
+                    seq_I2 = reverse_complement(seq_I2)
+
                 barcode = f"{seq_I1}_{seq_I2}"
             
             else:
                 barcode = seq_I1
 
             if barcode in expected_barcodes.keys():
+                assigned_count +=1
                 #print(f"Found it!! {barcode} has the name {expected_barcodes[barcode]}")
                 readID_R1 = f"{readID_R1} {barcode}"
 
@@ -170,8 +189,9 @@ def split_fastqs(file_location, expected_barcodes, double_coded):
 
                     fhsR2[barcode].write (("\n".join([readID_R2, seq_R2, line3_R2, qual_R2]) + "\n").encode())
 
-            #else:
+            else:
                 #print(f"Couldn't find this {barcode}")
+                unassigned_count +=1
 
             line_count += 1
 
@@ -181,6 +201,14 @@ def split_fastqs(file_location, expected_barcodes, double_coded):
                 print(err_msg)
                 fhsR1["log"].write(err_msg)
                 exit()
+
+        total_reads = assigned_count + unassigned_count
+        assigned_percentage = 100*(assigned_count/total_reads)
+        unassigned_percentage = 100*(unassigned_count/total_reads)
+        assigned_msg = f"\nAssigned reads:   {assigned_count:,} ({assigned_percentage:.1f})"
+        unassigned_msg = f"\nUnassigned reads: {unassigned_count:,} ({unassigned_percentage:.1f})\n"        
+        fhsR1["log"].write(assigned_msg)
+        fhsR1["log"].write(unassigned_msg)
 
     finally:
         r1.close()
@@ -203,6 +231,25 @@ def close_filehandles():
 		fhsR1[name].close() 
 	for name in fhsR2.keys():
 		fhsR2[name].close() 
+
+
+# from chat gpt - check this
+def reverse_complement(dna_seq):
+    """Return the reverse complement of a DNA sequence."""
+    # Create a mapping of each nucleotide to its complement
+    complement = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C', 'N': 'N'}
+    
+    # Convert the sequence to uppercase to handle mixed case input
+    dna_seq = dna_seq.upper()
+    
+    # Compute the complement and then reverse it
+    try:
+        rev_comp = ''.join(complement[base] for base in reversed(dna_seq))
+    except KeyError as e:
+        raise ValueError(f"Invalid nucleotide found in sequence: {e}")
+
+    return rev_comp
+
 
 #---------------------
 # quick barcode check
